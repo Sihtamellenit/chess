@@ -1204,6 +1204,7 @@ function OnlineLobby({ onBackToMenu }: { onBackToMenu: () => void }) {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const usernameRef = useRef("");
   const joinTokenRef = useRef("");
+  const presenceKeyRef = useRef("");
 
   const [presenceStatus, setPresenceStatus] = useState("Connexion...");
   const [usernameInput, setUsernameInput] = useState("");
@@ -1234,7 +1235,17 @@ function OnlineLobby({ onBackToMenu }: { onBackToMenu: () => void }) {
       return;
     }
 
-    const channel = supabase.channel("chess-online-lobby");
+    if (!presenceKeyRef.current) {
+      presenceKeyRef.current = createBrowserId("presence");
+    }
+
+    const channel = supabase.channel("chess-online-lobby", {
+      config: {
+        presence: {
+          key: presenceKeyRef.current,
+        },
+      },
+    });
 
     channelRef.current = channel;
 
@@ -1343,11 +1354,22 @@ function OnlineLobby({ onBackToMenu }: { onBackToMenu: () => void }) {
       setLobbyMessage(`${challenge.toUsername} a refuse le defi.`);
     });
 
-    channel.subscribe((status) => {
+    channel.subscribe((status, error) => {
       setPresenceStatus(status);
 
       if (status === "SUBSCRIBED") {
         setLobbyMessage("Connecte au lobby. Tu peux choisir ton pseudo.");
+      }
+
+      if (status === "CHANNEL_ERROR") {
+        setLobbyMessage(
+          error?.message ??
+            "Connexion Realtime impossible. Verifie la cle Supabase, le service Realtime et les restrictions de domaine.",
+        );
+      }
+
+      if (status === "TIMED_OUT") {
+        setLobbyMessage("Connexion Realtime trop lente. Reessaie dans un instant.");
       }
     });
 
