@@ -1,0 +1,2 @@
+# chess
+quick chess project
