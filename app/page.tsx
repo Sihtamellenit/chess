@@ -1562,7 +1562,7 @@ function OnlineLobby({ onBackToMenu }: { onBackToMenu: () => void }) {
 
         <div className="mb-4 border-2 border-neutral-900 bg-white p-4 shadow">
           <p className="text-sm">
-            Statut Realtime :{" "}
+            Statut Realtimeeee :{" "}
             <span className="font-semibold">{displayedPresenceStatus}</span>
           </p>
           <p className="mt-2 text-sm text-neutral-700">{lobbyMessage}</p>
