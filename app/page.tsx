@@ -27,6 +27,8 @@ type LastMove = {
   wasTwoSquarePawnMove: boolean;
 };
 
+type GameStatus = "playing" | "checkmate" | "stalemate";
+
 const initialBoard: Board = [
   [
     { color: "black", type: "rook", symbol: "♜" },
@@ -684,6 +686,65 @@ function isLegalMove(
   return !isKingInCheck(boardAfterMove, piece.color);
 }
 
+function hasAnyLegalMove(
+  board: Board,
+  color: PieceColor,
+  lastMove: LastMove | null,
+) {
+  // Pour detecter une fin de partie, on ne cherche pas "le meilleur coup".
+  // On cherche seulement s'il existe AU MOINS UN coup legal.
+  //
+  // Strategie simple :
+  // 1. parcourir toutes les cases ;
+  // 2. garder uniquement les pieces de la couleur a tester ;
+  // 3. essayer toutes les destinations possibles du plateau ;
+  // 4. si une destination est legale, on peut s'arreter tout de suite.
+  for (let fromRow = 0; fromRow < board.length; fromRow++) {
+    for (let fromColumn = 0; fromColumn < board[fromRow].length; fromColumn++) {
+      const piece = board[fromRow][fromColumn];
+
+      if (piece?.color !== color) {
+        continue;
+      }
+
+      const from = { row: fromRow, column: fromColumn };
+
+      for (let toRow = 0; toRow < board.length; toRow++) {
+        for (let toColumn = 0; toColumn < board[toRow].length; toColumn++) {
+          const to = { row: toRow, column: toColumn };
+
+          if (isLegalMove(board, from, to, lastMove)) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function getGameStatus(
+  board: Board,
+  colorToMove: PieceColor,
+  lastMove: LastMove | null,
+): GameStatus {
+  const playerHasLegalMove = hasAnyLegalMove(board, colorToMove, lastMove);
+
+  if (playerHasLegalMove) {
+    return "playing";
+  }
+
+  // Aucun coup legal restant :
+  // - si le roi est attaque, c'est echec et mat ;
+  // - si le roi n'est pas attaque, c'est pat.
+  if (isKingInCheck(board, colorToMove)) {
+    return "checkmate";
+  }
+
+  return "stalemate";
+}
+
 function getNextTurn(currentTurn: PieceColor) {
   return currentTurn === "white" ? "black" : "white";
 }
@@ -693,9 +754,15 @@ export default function Home() {
   const [selectedSquare, setSelectedSquare] = useState<Position | null>(null);
   const [currentTurn, setCurrentTurn] = useState<PieceColor>("white");
   const [lastMove, setLastMove] = useState<LastMove | null>(null);
+  const [gameStatus, setGameStatus] = useState<GameStatus>("playing");
   const [message, setMessage] = useState("Selectionne une piece blanche.");
 
   function handleSquareClick(position: Position) {
+    if (gameStatus !== "playing") {
+      setMessage("La partie est terminee.");
+      return;
+    }
+
     const clickedSquare = board[position.row][position.column];
 
     if (selectedSquare === null) {
@@ -744,16 +811,34 @@ export default function Home() {
     const nextLastMove = createLastMove(board, selectedSquare, position);
     const opponentColor = getNextTurn(currentTurn);
     const opponentIsInCheck = isKingInCheck(nextBoard, opponentColor);
+    const nextGameStatus = getGameStatus(
+      nextBoard,
+      opponentColor,
+      nextLastMove,
+    );
+
+    let nextMessage = `${selectedPiece.symbol} de ${getSquareName(
+      selectedSquare,
+    )} vers ${getSquareName(position)}.`;
+
+    if (nextGameStatus === "checkmate") {
+      nextMessage = `${nextMessage} Echec et mat !`;
+    } else if (nextGameStatus === "stalemate") {
+      nextMessage = `${nextMessage} Pat : egalite.`;
+    } else if (opponentIsInCheck) {
+      nextMessage = `${nextMessage} Echec !`;
+    }
 
     setBoard(nextBoard);
     setLastMove(nextLastMove);
     setSelectedSquare(null);
-    setCurrentTurn(opponentColor);
-    setMessage(
-      `${selectedPiece.symbol} de ${getSquareName(selectedSquare)} vers ${getSquareName(
-        position,
-      )}.${opponentIsInCheck ? " Echec !" : ""}`,
-    );
+    setGameStatus(nextGameStatus);
+
+    if (nextGameStatus === "playing") {
+      setCurrentTurn(opponentColor);
+    }
+
+    setMessage(nextMessage);
   }
 
   return (
@@ -762,8 +847,8 @@ export default function Home() {
         <div className="mb-6">
           <h1 className="text-3xl font-semibold">Jeu d&apos;echecs</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-600">
-            Etape 6 : le roque et la prise en passant sont ajoutes. Ces coups
-            speciaux passent eux aussi par la simulation anti-echec.
+            Etape 7 : apres chaque coup, on cherche si l&apos;adversaire a encore
+            au moins un coup legal. Sinon, c&apos;est mat ou pat.
           </p>
         </div>
 
@@ -771,11 +856,26 @@ export default function Home() {
           <p>
             Tour actuel :{" "}
             <span className="font-semibold">
-              {currentTurn === "white" ? "blancs" : "noirs"}
+              {gameStatus === "playing"
+                ? currentTurn === "white"
+                  ? "blancs"
+                  : "noirs"
+                : "partie terminee"}
             </span>
           </p>
           <p className="font-medium text-neutral-900">{message}</p>
         </div>
+
+        {gameStatus !== "playing" ? (
+          <div
+            className="mb-4 border-2 border-neutral-900 bg-white px-4 py-3 text-sm font-semibold text-neutral-950 shadow"
+            role="alert"
+          >
+            {gameStatus === "checkmate"
+              ? "Fin de partie : echec et mat."
+              : "Fin de partie : pat, egalite."}
+          </div>
+        ) : null}
 
         <p className="mb-4 text-xs text-neutral-600">
           Dernier coup :{" "}
