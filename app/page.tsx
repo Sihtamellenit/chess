@@ -9,6 +9,7 @@ type Piece = {
   color: PieceColor;
   type: PieceType;
   symbol: string;
+  hasMoved?: boolean;
 };
 
 type Square = Piece | null;
@@ -17,6 +18,13 @@ type Board = Square[][];
 type Position = {
   row: number;
   column: number;
+};
+
+type LastMove = {
+  piece: Piece;
+  from: Position;
+  to: Position;
+  wasTwoSquarePawnMove: boolean;
 };
 
 const initialBoard: Board = [
@@ -121,7 +129,57 @@ function isPathClear(board: Board, from: Position, to: Position) {
   return true;
 }
 
-function isPawnMoveValid(board: Board, from: Position, to: Position) {
+function isEnPassantMoveValid(
+  board: Board,
+  from: Position,
+  to: Position,
+  lastMove: LastMove | null,
+) {
+  const piece = board[from.row][from.column];
+  const targetSquare = board[to.row][to.column];
+
+  if (!piece || piece.type !== "pawn" || !lastMove) {
+    return false;
+  }
+
+  // La prise en passant est une capture diagonale vers une case vide.
+  // C'est le seul cas ou un pion capture une piece qui n'est PAS sur sa case
+  // d'arrivee.
+  const direction = piece.color === "white" ? -1 : 1;
+  const rowChange = to.row - from.row;
+  const columnDistance = Math.abs(to.column - from.column);
+
+  const movesDiagonallyToEmptySquare =
+    rowChange === direction && columnDistance === 1 && targetSquare === null;
+
+  if (!movesDiagonallyToEmptySquare) {
+    return false;
+  }
+
+  // Pour etre prenable en passant, le dernier coup adverse doit etre :
+  // 1. un pion ;
+  // 2. un pion adverse ;
+  // 3. un avance de deux cases ;
+  // 4. un pion arrive juste a cote de notre pion.
+  const lastPiece = lastMove.piece;
+  const lastMoveWasEnemyPawn =
+    lastPiece.type === "pawn" && lastPiece.color !== piece.color;
+  const enemyPawnIsBesideUs =
+    lastMove.to.row === from.row && lastMove.to.column === to.column;
+
+  return (
+    lastMoveWasEnemyPawn &&
+    lastMove.wasTwoSquarePawnMove &&
+    enemyPawnIsBesideUs
+  );
+}
+
+function isPawnMoveValid(
+  board: Board,
+  from: Position,
+  to: Position,
+  lastMove: LastMove | null,
+) {
   const piece = board[from.row][from.column];
   const targetSquare = board[to.row][to.column];
 
@@ -161,6 +219,10 @@ function isPawnMoveValid(board: Board, from: Position, to: Position) {
     targetSquare === null;
 
   if (movesTwoSquaresForward) {
+    return true;
+  }
+
+  if (isEnPassantMoveValid(board, from, to, lastMove)) {
     return true;
   }
 
@@ -276,7 +338,74 @@ function isKingMoveValid(board: Board, from: Position, to: Position) {
   return Math.max(rowDistance, columnDistance) === 1;
 }
 
-function isMoveValid(board: Board, from: Position, to: Position) {
+function isCastlingMoveValid(board: Board, from: Position, to: Position) {
+  const king = board[from.row][from.column];
+
+  if (!king || king.type !== "king") {
+    return false;
+  }
+
+  // Le roque est un mouvement horizontal du roi de deux cases.
+  const rowChange = to.row - from.row;
+  const columnChange = to.column - from.column;
+  const isCastlingShape = rowChange === 0 && Math.abs(columnChange) === 2;
+
+  if (!isCastlingShape) {
+    return false;
+  }
+
+  // Condition 1 : le roi ne doit jamais avoir bouge.
+  // On utilise hasMoved. Au debut, la valeur est undefined, ce qui signifie
+  // "pas encore bouge". Des qu'une piece bouge, on met hasMoved a true.
+  if (king.hasMoved) {
+    return false;
+  }
+
+  // Condition 2 : la tour du bon cote doit exister et ne pas avoir bouge.
+  const direction = Math.sign(columnChange);
+  const rookColumn = direction === 1 ? 7 : 0;
+  const rook = board[from.row][rookColumn];
+
+  if (!rook || rook.type !== "rook" || rook.color !== king.color || rook.hasMoved) {
+    return false;
+  }
+
+  // Condition 3 : les cases entre le roi et la tour doivent etre vides.
+  // Petit roque blanc : e1 -> g1, on verifie f1 et g1.
+  // Grand roque blanc : e1 -> c1, on verifie d1, c1, et b1 entre roi et tour.
+  let columnToCheck = from.column + direction;
+
+  while (columnToCheck !== rookColumn) {
+    if (board[from.row][columnToCheck] !== null) {
+      return false;
+    }
+
+    columnToCheck = columnToCheck + direction;
+  }
+
+  // Condition 4 : le roi ne doit pas etre actuellement en echec.
+  if (isKingInCheck(board, king.color)) {
+    return false;
+  }
+
+  const opponentColor = getNextTurn(king.color);
+  const firstKingStep = { row: from.row, column: from.column + direction };
+  const secondKingStep = { row: from.row, column: from.column + direction * 2 };
+
+  // Condition 5 : le roi ne doit pas traverser une case attaquee,
+  // ni finir sur une case attaquee.
+  return (
+    !isSquareAttacked(board, firstKingStep, opponentColor) &&
+    !isSquareAttacked(board, secondKingStep, opponentColor)
+  );
+}
+
+function isMoveValid(
+  board: Board,
+  from: Position,
+  to: Position,
+  lastMove: LastMove | null,
+) {
   const piece = board[from.row][from.column];
 
   if (!piece) {
@@ -284,7 +413,7 @@ function isMoveValid(board: Board, from: Position, to: Position) {
   }
 
   if (piece.type === "pawn") {
-    return isPawnMoveValid(board, from, to);
+    return isPawnMoveValid(board, from, to, lastMove);
   }
 
   if (piece.type === "rook") {
@@ -304,23 +433,89 @@ function isMoveValid(board: Board, from: Position, to: Position) {
   }
 
   if (piece.type === "king") {
-    return isKingMoveValid(board, from, to);
+    return (
+      isKingMoveValid(board, from, to) || isCastlingMoveValid(board, from, to)
+    );
   }
 
   return false;
 }
 
-function copyBoardAndMovePiece(board: Board, from: Position, to: Position) {
+function copyBoardAndMovePiece(
+  board: Board,
+  from: Position,
+  to: Position,
+  lastMove: LastMove | null,
+) {
   // On copie chaque ligne avec [...row].
   // Sans cette copie, on modifierait directement l'ancien plateau.
   // En React, on prefere creer un nouveau tableau pour que l'interface se mette a jour proprement.
   const nextBoard = board.map((row) => [...row]);
   const pieceToMove = nextBoard[from.row][from.column];
 
-  nextBoard[to.row][to.column] = pieceToMove;
+  if (!pieceToMove) {
+    return nextBoard;
+  }
+
+  const isCastling =
+    pieceToMove.type === "king" && Math.abs(to.column - from.column) === 2;
+
+  if (isCastling) {
+    // Le roque deplace deux pieces :
+    // - le roi va deux cases vers la tour ;
+    // - la tour saute de l'autre cote du roi.
+    const direction = Math.sign(to.column - from.column);
+    const rookFromColumn = direction === 1 ? 7 : 0;
+    const rookToColumn = from.column + direction;
+    const rook = nextBoard[from.row][rookFromColumn];
+
+    nextBoard[to.row][to.column] = { ...pieceToMove, hasMoved: true };
+    nextBoard[from.row][from.column] = null;
+
+    if (rook) {
+      nextBoard[from.row][rookToColumn] = { ...rook, hasMoved: true };
+      nextBoard[from.row][rookFromColumn] = null;
+    }
+
+    return nextBoard;
+  }
+
+  const isEnPassant =
+    pieceToMove.type === "pawn" &&
+    nextBoard[to.row][to.column] === null &&
+    from.column !== to.column &&
+    isEnPassantMoveValid(board, from, to, lastMove);
+
+  if (isEnPassant) {
+    // En passant, le pion arrive sur une case vide,
+    // mais capture le pion adverse situe juste a cote de sa case de depart.
+    nextBoard[from.row][to.column] = null;
+  }
+
+  nextBoard[to.row][to.column] = { ...pieceToMove, hasMoved: true };
   nextBoard[from.row][from.column] = null;
 
   return nextBoard;
+}
+
+function createLastMove(
+  board: Board,
+  from: Position,
+  to: Position,
+): LastMove | null {
+  const piece = board[from.row][from.column];
+
+  if (!piece) {
+    return null;
+  }
+
+  return {
+    piece: { ...piece, hasMoved: true },
+    from,
+    to,
+    wasTwoSquarePawnMove:
+      piece.type === "pawn" && Math.abs(to.row - from.row) === 2,
+  };
 }
 
 function findKing(board: Board, color: PieceColor) {
@@ -458,7 +653,12 @@ function isKingInCheck(board: Board, color: PieceColor) {
   return isSquareAttacked(board, kingPosition, opponentColor);
 }
 
-function isLegalMove(board: Board, from: Position, to: Position) {
+function isLegalMove(
+  board: Board,
+  from: Position,
+  to: Position,
+  lastMove: LastMove | null,
+) {
   const piece = board[from.row][from.column];
 
   if (!piece) {
@@ -467,13 +667,13 @@ function isLegalMove(board: Board, from: Position, to: Position) {
 
   // Premiere couche : est-ce que la piece a le droit de bouger comme ca ?
   // Exemple : une tour en diagonale est refusee ici.
-  if (!isMoveValid(board, from, to)) {
+  if (!isMoveValid(board, from, to, lastMove)) {
     return false;
   }
 
   // Deuxieme couche : on simule le coup sur une copie du plateau.
   // Rien n'est encore affiche a l'ecran. C'est un "brouillon" en memoire.
-  const boardAfterMove = copyBoardAndMovePiece(board, from, to);
+  const boardAfterMove = copyBoardAndMovePiece(board, from, to, lastMove);
 
   // Si, apres ce coup virtuel, notre propre roi est attaque,
   // alors le coup est illegal.
@@ -492,6 +692,7 @@ export default function Home() {
   const [board, setBoard] = useState(initialBoard);
   const [selectedSquare, setSelectedSquare] = useState<Position | null>(null);
   const [currentTurn, setCurrentTurn] = useState<PieceColor>("white");
+  const [lastMove, setLastMove] = useState<LastMove | null>(null);
   const [message, setMessage] = useState("Selectionne une piece blanche.");
 
   function handleSquareClick(position: Position) {
@@ -527,18 +728,25 @@ export default function Home() {
       return;
     }
 
-    if (!isLegalMove(board, selectedSquare, position)) {
+    if (!isLegalMove(board, selectedSquare, position, lastMove)) {
       setMessage(
         "Coup illegal : la piece ne bouge pas comme ca, ou ton roi resterait en echec.",
       );
       return;
     }
 
-    const nextBoard = copyBoardAndMovePiece(board, selectedSquare, position);
+    const nextBoard = copyBoardAndMovePiece(
+      board,
+      selectedSquare,
+      position,
+      lastMove,
+    );
+    const nextLastMove = createLastMove(board, selectedSquare, position);
     const opponentColor = getNextTurn(currentTurn);
     const opponentIsInCheck = isKingInCheck(nextBoard, opponentColor);
 
     setBoard(nextBoard);
+    setLastMove(nextLastMove);
     setSelectedSquare(null);
     setCurrentTurn(opponentColor);
     setMessage(
@@ -554,8 +762,8 @@ export default function Home() {
         <div className="mb-6">
           <h1 className="text-3xl font-semibold">Jeu d&apos;echecs</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-600">
-            Etape 5 : avant d&apos;accepter un coup, on le simule pour verifier
-            que notre propre roi n&apos;est pas laisse en echec.
+            Etape 6 : le roque et la prise en passant sont ajoutes. Ces coups
+            speciaux passent eux aussi par la simulation anti-echec.
           </p>
         </div>
 
@@ -568,6 +776,15 @@ export default function Home() {
           </p>
           <p className="font-medium text-neutral-900">{message}</p>
         </div>
+
+        <p className="mb-4 text-xs text-neutral-600">
+          Dernier coup :{" "}
+          {lastMove
+            ? `${lastMove.piece.symbol} ${getSquareName(lastMove.from)} -> ${getSquareName(
+                lastMove.to,
+              )}`
+            : "aucun"}
+        </p>
 
         <div className="grid aspect-square w-full grid-cols-8 overflow-hidden border-4 border-neutral-900 shadow-xl">
           {board.map((row, rowIndex) =>
